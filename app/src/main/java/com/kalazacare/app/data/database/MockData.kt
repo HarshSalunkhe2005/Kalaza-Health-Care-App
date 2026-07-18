@@ -213,11 +213,11 @@ object MockData {
     // ──────────────────────────────────────────────────────────────────────────
     val careNotes = listOf(
         CareNote(id = "cn1", patientId = "p1", staffId = "staff_2",
-            staffName = "Tara Menon", date = LocalDate.now(),
+            staffName = "Tara Menon",
             timestamp = LocalDateTime.now().minusHours(3),
             note = "Patient had a good morning. Ate full breakfast. Mood was cheerful. Complained of slight knee pain around 10 AM — applied cold pack as advised."),
         CareNote(id = "cn2", patientId = "p1", staffId = "staff_3",
-            staffName = "Rohan Nair", date = LocalDate.now().minusDays(1),
+            staffName = "Rohan Nair",
             timestamp = LocalDateTime.now().minusDays(1).minusHours(5),
             note = "Evening restlessness noted. Patient had difficulty sleeping. Given warm milk. Slept by 10:30 PM."),
     )
