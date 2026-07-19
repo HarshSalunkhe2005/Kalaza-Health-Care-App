@@ -196,7 +196,7 @@ private fun AddStaffDialog(
                     ) {
                         // Admin can only assign the two operational roles — ADMIN accounts
                         // aren't created through this dialog.
-                        UserRole.values().filter { it != UserRole.ADMIN }.forEach { role ->
+                        UserRole.entries.filter { it != UserRole.ADMIN }.forEach { role ->
                             DropdownMenuItem(
                                 text = { Text(role.displayLabel()) },
                                 onClick = {
@@ -214,7 +214,7 @@ private fun AddStaffDialog(
                 onClick = {
                     onAddStaff(
                         Staff(
-                            name = name,
+                            name = name.trim(),
                             email = email,
                             role = selectedRole,
                             phone = phone,
