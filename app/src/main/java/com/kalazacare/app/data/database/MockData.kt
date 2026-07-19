@@ -9,7 +9,7 @@ object MockData {
 
     val staffList = listOf(
         Staff(id = "staff_1", name = "Pooja Rao",  email = "admin@example.com",
-            role = UserRole.ADMIN,      phone = "+91 98765 00001", isActive = true,
+            role = UserRole.SUPER_ADMIN, phone = "+91 98765 00001", isActive = true,
             joinedDate = LocalDate.of(2022, 3, 1)),
         Staff(id = "staff_2", name = "Tara Menon",  email = "tara@example.com",
             role = UserRole.SUPERVISOR, phone = "+91 98765 00002", isActive = true,
@@ -23,6 +23,9 @@ object MockData {
         Staff(id = "staff_5", name = "Anya Pillai",   email = "anya@example.com",
             role = UserRole.STAFF,      phone = "+91 98765 00005", isActive = true,
             joinedDate = LocalDate.of(2024, 5, 20)),
+        Staff(id = "staff_6", name = "Vivek Shah",  email = "vivek@example.com",
+            role = UserRole.ADMIN,      phone = "+91 98765 00006", isActive = true,
+            joinedDate = LocalDate.of(2024, 8, 1)),
     )
 
     val patientList = listOf(
@@ -438,13 +441,13 @@ object MockData {
     )
 
     val notifications = listOf(
-        AppNotification(id = "n1", recipientRole = UserRole.ADMIN,
+        AppNotification(id = "n1", recipientRole = UserRole.SUPER_ADMIN,
             type = NotificationType.APPROVAL_REQUESTED,
             title = "New Edit Request",
             message = "Tara Menon requested a change to Meera Kapoor's Current Issues",
             timestamp = LocalDateTime.now().minusHours(2),
             targetRoute = "approval"),
-        AppNotification(id = "n2", recipientRole = UserRole.ADMIN,
+        AppNotification(id = "n2", recipientRole = UserRole.SUPER_ADMIN,
             type = NotificationType.APPROVAL_REQUESTED,
             title = "New Edit Request",
             message = "Rohan Nair requested a change to Arjun Rao's Allergies",
