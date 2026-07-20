@@ -2,6 +2,7 @@ package com.kalazacare.app.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
 import com.kalazacare.app.data.model.*
 import com.kalazacare.app.data.repository.*
 import com.kalazacare.app.util.PhotoCapture
@@ -9,6 +10,7 @@ import com.kalazacare.app.util.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalDateTime
 
@@ -25,12 +27,15 @@ class LoginViewModel(private val authRepo: AuthRepository) : ViewModel() {
             _loginState.value = LoginState.Error("Please fill in all fields")
             return
         }
-        val staff = authRepo.login(name, password)
-        if (staff != null) {
-            SessionManager.setCurrentStaff(staff)
-            _loginState.value = LoginState.Success(staff)
-        } else {
-            _loginState.value = LoginState.Error("Invalid credentials or account inactive")
+        _loginState.value = LoginState.Loading
+        viewModelScope.launch {
+            val staff = authRepo.login(name, password)
+            if (staff != null) {
+                SessionManager.setCurrentStaff(staff)
+                _loginState.value = LoginState.Success(staff)
+            } else {
+                _loginState.value = LoginState.Error("Invalid credentials or account inactive")
+            }
         }
     }
     fun resetState() { _loginState.value = LoginState.Idle }
@@ -182,6 +187,20 @@ class PatientViewModel(
             iconName = "archive",
         ))
     }
+
+    fun unarchivePatient(patient: Patient) {
+        patientRepo.unarchivePatient(patient.id)
+        auditRepo.addLog(AuditLogEntry(
+            id = "al_${System.currentTimeMillis()}",
+            action = "Patient Unarchived",
+            performedById = SessionManager.getCurrentStaffId(),
+            performedByName = SessionManager.getCurrentStaffName(),
+            targetPatientId = patient.id,
+            targetPatientName = patient.name,
+            details = "Patient record restored from archive",
+            iconName = "person",
+        ))
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -311,6 +330,7 @@ class MarViewModel(
     }
 
     fun addMedication(entry: MedicationEntry, onResult: (warning: String?) -> Unit = {}) {
+        if (!SessionManager.isAdmin()) return
         val admissionDate = patientRepo.getPatientById(entry.patientId)?.admissionDate
         val warning = if (admissionDate != null && entry.scheduledDate.isBefore(admissionDate))
             "Warning: this dose is scheduled before the patient's admission date ($admissionDate)"
@@ -322,12 +342,16 @@ class MarViewModel(
 
     // CHANGE 5: edit existing medication entry (SuperAdmin only)
     fun updateMedication(entry: MedicationEntry) {
+        if (!SessionManager.isAdmin()) return
         repo.updateMedication(entry)
         load(entry.patientId, entry.scheduledDate)
     }
 
-    // Add/edit/delete of MAR entries is SuperAdmin-only (enforced in the UI too).
+    // Add/edit/delete of MAR entries is SuperAdmin-only (enforced in the UI too,
+    // but the ViewModel double-checks — same defense-in-depth pattern as every
+    // other privileged mutation in this file).
     fun deleteMedication(entry: MedicationEntry) {
+        if (!SessionManager.isAdmin()) return
         repo.deleteMedication(entry.id)
         load(entry.patientId, entry.scheduledDate)
     }
@@ -451,7 +475,15 @@ class UtilityViewModel(
     val records: StateFlow<List<UtilityRecord>> = _records.asStateFlow()
     private val _items = MutableStateFlow<List<UtilityItem>>(emptyList())
     val items: StateFlow<List<UtilityItem>> = _items.asStateFlow()
-    fun load(patientId: String) { _records.value = repo.getUtilityForPatient(patientId); _items.value = repo.getUtilityItems() }
+    // Includes deactivated items too, so the table can still show a column for
+    // historical quantities logged against an item type that's since been removed.
+    private val _allItems = MutableStateFlow<List<UtilityItem>>(emptyList())
+    val allItems: StateFlow<List<UtilityItem>> = _allItems.asStateFlow()
+    fun load(patientId: String) {
+        _records.value = repo.getUtilityForPatient(patientId)
+        _items.value = repo.getUtilityItems()
+        _allItems.value = repo.getAllUtilityItems()
+    }
     fun addRecord(record: UtilityRecord) { repo.addUtilityRecord(record.copy(id = "u_${System.currentTimeMillis()}")); load(record.patientId) }
 
     // Same 24h-grace-then-approval policy as Vitals.
@@ -546,6 +578,7 @@ class DoctorVisitViewModel(
             if (original.doctorName != updated.doctorName) changes.add("Doctor Name" to (original.doctorName to updated.doctorName))
             if (original.specialty != updated.specialty) changes.add("Specialty" to (original.specialty to updated.specialty))
             if (original.date != updated.date) changes.add("Visit Date" to (original.date.toString() to updated.date.toString()))
+            if (original.time != updated.time) changes.add("Visit Time" to (original.time.toString() to updated.time.toString()))
             if (original.notes != updated.notes) changes.add("Notes" to (original.notes to updated.notes))
             if (original.nextVisitDate != updated.nextVisitDate) changes.add("Next Visit Date" to ((original.nextVisitDate?.toString() ?: "") to (updated.nextVisitDate?.toString() ?: "")))
             if (original.prescriptionChanges != updated.prescriptionChanges) changes.add("Prescription Changes" to (original.prescriptionChanges to updated.prescriptionChanges))
@@ -581,6 +614,16 @@ class DoctorVisitViewModel(
         // Mark confirmed + archive if date has passed
         val shouldArchive = !visit.date.isAfter(LocalDate.now())
         repo.updateVisit(visit.copy(isConfirmed = true, isArchived = shouldArchive))
+        auditRepo.addLog(AuditLogEntry(
+            id = "al_${System.currentTimeMillis()}",
+            action = "Doctor Visit Confirmed",
+            performedById = SessionManager.getCurrentStaffId(),
+            performedByName = SessionManager.getCurrentStaffName(),
+            targetPatientId = visit.patientId,
+            targetPatientName = patientRepo.getPatientById(visit.patientId)?.name ?: "",
+            details = "Confirmed visit with ${visit.doctorName} on ${visit.date}",
+            iconName = "check_circle",
+        ))
         load(visit.patientId)
     }
 
@@ -718,8 +761,78 @@ class ApprovalViewModel(
     init { load() }
     fun load() { _requests.value = repo.getAllRequests() }
 
+    /**
+     * Reads the field's *current* value straight from the live record, so [approve] can
+     * tell whether the request is still safe to apply. Returns null if the underlying
+     * record (patient, visit, vital, utility record, or note) no longer exists.
+     */
+    private fun currentFieldValue(request: ApprovalRequest): String? = when (request.entityType) {
+        ApprovalEntityType.PATIENT -> patientRepo.getPatientById(request.patientId)?.let { p ->
+            when (request.fieldChanged) {
+                "Name"              -> p.name
+                "Age"               -> p.age.toString()
+                "Gender"            -> p.gender.name
+                "Room No"           -> p.roomNo
+                "Medical History"   -> p.medicalHistory
+                "Current Issues"    -> p.currentIssues
+                "Allergies"         -> p.allergies
+                "Emergency Contact" -> p.emergencyContact
+                "Emergency Phone"   -> p.emergencyPhone
+                "Primary Diagnosis" -> p.primaryDiagnosis
+                "Admission Date"    -> p.admissionDate.toString()
+                else                -> request.oldValue
+            }
+        }
+        ApprovalEntityType.DOCTOR_VISIT -> doctorVisitRepo.getVisitById(request.entityId)?.let { v ->
+            if (request.action == ApprovalAction.DELETE) request.oldValue else when (request.fieldChanged) {
+                "Doctor Name"          -> v.doctorName
+                "Specialty"            -> v.specialty
+                "Visit Date"           -> v.date.toString()
+                "Visit Time"           -> v.time.toString()
+                "Notes"                -> v.notes
+                "Next Visit Date"      -> v.nextVisitDate?.toString() ?: ""
+                "Prescription Changes" -> v.prescriptionChanges
+                else                   -> request.oldValue
+            }
+        }
+        ApprovalEntityType.VITAL -> vitalsRepo.getVitalById(request.entityId)?.let { v ->
+            when (request.fieldChanged) {
+                "Pulse"           -> v.pulse
+                "BP"              -> v.bp
+                "SpO2"            -> v.spo2
+                "Temperature"     -> v.temperature
+                "Sugar (Fasting)" -> v.sugarFasting
+                "Sugar (PP)"      -> v.sugarPP
+                else              -> request.oldValue
+            }
+        }
+        ApprovalEntityType.UTILITY -> utilityRepo.getUtilityRecordById(request.entityId)?.let { u ->
+            when (request.fieldChanged) {
+                "Issued To"  -> u.issuedToCaregiver
+                "Issued By"  -> u.issuedBySupervisor
+                "Checked By" -> u.checkedBy
+                else         -> request.oldValue
+            }
+        }
+        ApprovalEntityType.CARE_NOTE -> careNoteRepo.getNoteById(request.entityId)?.note
+    }
+
     fun approve(id: String) {
         val request = repo.getRequestById(id) ?: return
+
+        // The record may have been deleted, or edited again, by someone else while this
+        // request sat pending — applying it blindly would either no-op (but still claim
+        // "approved") or silently clobber newer data. Check the live value first.
+        val liveValue = currentFieldValue(request)
+        if (liveValue == null) {
+            rejectStale(request, "the record this change targeted no longer exists")
+            return
+        }
+        if (request.action != ApprovalAction.DELETE && liveValue != request.oldValue) {
+            rejectStale(request, "the record changed since this request was submitted")
+            return
+        }
+
         repo.approve(id, SessionManager.getCurrentStaffId(), SessionManager.getCurrentStaffName())
         when (request.entityType) {
             ApprovalEntityType.PATIENT -> {
@@ -768,6 +881,30 @@ class ApprovalViewModel(
         load()
     }
 
+    /** Auto-rejects a request that can no longer be safely applied, with a system reason. */
+    private fun rejectStale(request: ApprovalRequest, reason: String) {
+        repo.reject(request.id, SessionManager.getCurrentStaffId(), SessionManager.getCurrentStaffName(), reason)
+        auditRepo.addLog(AuditLogEntry(
+            id = "al_${System.currentTimeMillis()}",
+            action = "Edit Request Auto-Rejected",
+            performedById = SessionManager.getCurrentStaffId(),
+            performedByName = SessionManager.getCurrentStaffName(),
+            targetPatientId = request.patientId,
+            targetPatientName = request.patientName,
+            details = "Could not approve change to ${request.fieldChanged} — $reason",
+            iconName = "cancel",
+        ))
+        notificationRepo.add(AppNotification(
+            id = "n_${System.currentTimeMillis()}",
+            recipientStaffId = request.requestedById,
+            type = NotificationType.APPROVAL_REJECTED,
+            title = "Edit Request Could Not Be Applied",
+            message = "Your ${request.fieldChanged} change for ${request.patientName} could not be applied — $reason",
+            targetRoute = "patient/${request.patientId}",
+        ))
+        load()
+    }
+
     fun reject(id: String, reason: String) {
         val request = repo.getRequestById(id) ?: return
         repo.reject(id, SessionManager.getCurrentStaffId(), SessionManager.getCurrentStaffName(), reason)
@@ -811,6 +948,7 @@ class ApprovalViewModel(
         "Doctor Name"           -> visit.copy(doctorName = newValue)
         "Specialty"             -> visit.copy(specialty = newValue)
         "Visit Date"            -> visit.copy(date = runCatching { LocalDate.parse(newValue) }.getOrDefault(visit.date))
+        "Visit Time"            -> visit.copy(time = runCatching { java.time.LocalTime.parse(newValue) }.getOrDefault(visit.time))
         "Notes"                 -> visit.copy(notes = newValue)
         "Next Visit Date"       -> visit.copy(nextVisitDate = newValue.takeIf { it.isNotBlank() }?.let { runCatching { LocalDate.parse(it) }.getOrNull() })
         "Prescription Changes"  -> visit.copy(prescriptionChanges = newValue)
@@ -859,11 +997,26 @@ class ConfigViewModel(
     private val _utilItems = MutableStateFlow<List<UtilityItem>>(emptyList())
     val utilItems: StateFlow<List<UtilityItem>> = _utilItems.asStateFlow()
     init { load() }
-    fun load() { _staffList.value = staffRepo.getAllStaff(); _utilItems.value = utilityRepo.getUtilityItems() }
-    fun addStaff(staff: Staff) { staffRepo.addStaff(staff.copy(id = "staff_${System.currentTimeMillis()}")); _staffList.value = staffRepo.getAllStaff() }
-    fun revokeStaff(id: String) { staffRepo.revokeStaff(id); _staffList.value = staffRepo.getAllStaff() }
-    fun unrevokeStaff(id: String) { staffRepo.unrevokeStaff(id); _staffList.value = staffRepo.getAllStaff() }
-    fun deleteStaff(id: String) { staffRepo.deleteStaff(id); _staffList.value = staffRepo.getAllStaff() }
+    fun load() { viewModelScope.launch { refreshStaff(); _utilItems.value = utilityRepo.getUtilityItems() } }
+    private suspend fun refreshStaff() { _staffList.value = staffRepo.getAllStaff() }
+
+    /** [password] is assigned by the Super Admin right now, at creation time — there's no separate invite/setup step. */
+    fun addStaff(name: String, email: String, phone: String, role: UserRole, password: String, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                staffRepo.addStaff(name, email, phone, role, password)
+                refreshStaff()
+                onResult(true, "Staff member added")
+            } catch (e: DuplicateStaffNameException) {
+                onResult(false, e.message ?: "That name is already taken")
+            } catch (e: Exception) {
+                onResult(false, "Could not add staff member: ${e.message}")
+            }
+        }
+    }
+    fun revokeStaff(id: String) { viewModelScope.launch { staffRepo.revokeStaff(id); refreshStaff() } }
+    fun unrevokeStaff(id: String) { viewModelScope.launch { staffRepo.unrevokeStaff(id); refreshStaff() } }
+    fun deleteStaff(id: String) { viewModelScope.launch { staffRepo.deleteStaff(id); refreshStaff() } }
     fun addUtilityItem(item: UtilityItem) { utilityRepo.addUtilityItem(item.copy(id = "ui_${System.currentTimeMillis()}")); _utilItems.value = utilityRepo.getUtilityItems() }
     fun deleteUtilityItem(id: String) { utilityRepo.deleteUtilityItem(id); _utilItems.value = utilityRepo.getUtilityItems() }
 }
