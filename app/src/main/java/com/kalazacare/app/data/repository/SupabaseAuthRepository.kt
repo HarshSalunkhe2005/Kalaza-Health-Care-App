@@ -13,10 +13,19 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.time.LocalDate
 import java.util.UUID
 
 private const val STAFF_TABLE = "staff"
+
+@Serializable
+private data class LoginLookupRow(
+    val id: String,
+    @SerialName("auth_email") val authEmail: String,
+    @SerialName("is_active") val isActive: Boolean,
+)
 
 @Serializable
 data class StaffRow(
@@ -64,17 +73,25 @@ class SupabaseAuthRepository(private val client: SupabaseClient) : AuthRepositor
         val trimmedName = name.trim()
         if (trimmedName.isBlank() || password.isBlank()) return null
 
-        val row = client.postgrest.from(STAFF_TABLE)
-            .select { filter { eq("name_lower", trimmedName.lowercase()) } }
-            .decodeSingleOrNull<StaffRow>() ?: return null
-        val staff = row.toDomain()
-        if (!staff.isActive || staff.authEmail.isBlank()) return null
+        // Before sign-in there's no auth.uid() yet, so the normal RLS-guarded
+        // `staff` table read (own row only) can't resolve name -> auth_email.
+        // This narrow SECURITY DEFINER function exposes only the 3 fields
+        // needed for that lookup instead of opening the whole table to anon.
+        val params = buildJsonObject { put("p_name_lower", trimmedName.lowercase()) }
+        val lookup = client.postgrest.rpc("staff_login_lookup", params)
+            .decodeSingleOrNull<LoginLookupRow>() ?: return null
+        if (!lookup.isActive || lookup.authEmail.isBlank()) return null
 
         return try {
             client.auth.signInWith(Email) {
-                email = staff.authEmail
+                email = lookup.authEmail
                 this.password = password
             }
+            // Now signed in, auth.uid() == lookup.id, so the full row is readable.
+            val row = client.postgrest.from(STAFF_TABLE)
+                .select { filter { eq("id", lookup.id) } }
+                .decodeSingleOrNull<StaffRow>() ?: return null
+            val staff = row.toDomain()
             loggedIn = staff
             staff
         } catch (_: Exception) {
