@@ -28,9 +28,9 @@ private fun Map<String, Any?>.dateTime(key: String): LocalDateTime =
 private fun Map<String, Any?>.dateTimeOrNull(key: String): LocalDateTime? =
     strOrNull(key)?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }
 private inline fun <reified E : Enum<E>> Map<String, Any?>.enum(key: String, default: E): E =
-    strOrNull(key)?.let { name -> E::class.java.enumConstants.firstOrNull { it.name == name } } ?: default
+    strOrNull(key)?.let { name -> E::class.java.enumConstants?.firstOrNull { it.name == name } } ?: default
 private inline fun <reified E : Enum<E>> Map<String, Any?>.enumOrNull(key: String): E? =
-    strOrNull(key)?.let { name -> E::class.java.enumConstants.firstOrNull { it.name == name } }
+    strOrNull(key)?.let { name -> E::class.java.enumConstants?.firstOrNull { it.name == name } }
 @Suppress("UNCHECKED_CAST")
 private fun Map<String, Any?>.intMap(key: String): Map<String, Int> =
     (this[key] as? Map<String, Any?>)?.mapValues { (_, v) -> (v as? Number)?.toInt() ?: 0 } ?: emptyMap()
@@ -433,20 +433,24 @@ private fun AppNotification.toMap(): Map<String, Any?> = mapOf(
     "timestamp" to timestamp.toString(), "isRead" to isRead, "targetRoute" to targetRoute,
 )
 private fun notificationFrom(id: String, d: Map<String, Any?>) = AppNotification(
-    id = id, recipientStaffId = d.str("recipientStaffId"), recipientRole = d.enumOrNull("recipientRole"),
+    id = id, recipientStaffId = d.str("recipientStaffId"), recipientRole = d.enumOrNull<UserRole>("recipientRole"),
     type = d.enum("type", NotificationType.APPROVAL_REQUESTED), title = d.str("title"), message = d.str("message"),
     timestamp = d.dateTime("timestamp"), isRead = d.bool("isRead"), targetRoute = d.str("targetRoute"),
 )
 
 class FirestoreNotificationRepository(private val db: FirebaseFirestore) : NotificationRepository {
     private val col = db.collection("notifications")
-    private fun matches(n: AppNotification, staffId: String, role: UserRole) =
-        (n.recipientStaffId.isNotEmpty() && n.recipientStaffId == staffId) ||
-        (n.recipientRole != null && n.recipientRole == role)
-    override suspend fun getForRecipient(staffId: String, role: UserRole): List<AppNotification> =
-        col.get().await().documents.mapNotNull { d -> d.data?.let { notificationFrom(d.id, it) } }
-            .filter { matches(it, staffId, role) }
+    // Two separately-scoped queries rather than one broad collection fetch filtered
+    // client-side: Firestore denies an entire list query outright if it could return
+    // even one document the caller's security rule wouldn't allow, so each query here
+    // is pre-filtered to exactly what the corresponding rule clause can verify.
+    override suspend fun getForRecipient(staffId: String, role: UserRole): List<AppNotification> {
+        val byStaff = col.whereEqualTo("recipientStaffId", staffId).get().await().documents
+        val byRole = col.whereEqualTo("recipientRole", role.name).get().await().documents
+        return (byStaff + byRole).distinctBy { it.id }
+            .mapNotNull { d -> d.data?.let { notificationFrom(d.id, it) } }
             .sortedByDescending { it.timestamp }
+    }
     override suspend fun getUnreadCountForRecipient(staffId: String, role: UserRole): Int =
         getForRecipient(staffId, role).count { !it.isRead }
     override suspend fun add(notification: AppNotification) {
