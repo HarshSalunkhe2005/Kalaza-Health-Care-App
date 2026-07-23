@@ -11,7 +11,6 @@ interface AuthRepository {
     /** Null on any failure — wrong name, wrong password, or a revoked (inactive) account. */
     suspend fun login(name: String, password: String): Staff?
     fun logout()
-    fun currentStaff(): Staff?
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -55,6 +54,8 @@ interface MedicationRepository {
     suspend fun deleteMedication(id: String)
     suspend fun markAdministered(id: String, staffName: String, photoUrl: String, photoExpiresAt: java.time.LocalDateTime)
     suspend fun allotMedication(id: String, staffId: String, staffName: String, photoUrl: String, photoExpiresAt: java.time.LocalDateTime)
+    /** The permanent compliance record behind Photo Audit — see [MedicationEvidenceEvent]. */
+    suspend fun getEvidenceLog(): List<MedicationEvidenceEvent>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -144,7 +145,6 @@ interface StaffRepository {
     suspend fun revokeStaff(id: String)
     suspend fun unrevokeStaff(id: String)
     suspend fun deleteStaff(id: String)
-    suspend fun updateStaff(staff: Staff)
     /** Called after login and whenever Firebase Messaging rotates this device's token. */
     suspend fun updateFcmToken(staffId: String, token: String)
 }
