@@ -1,8 +1,5 @@
 package com.kalazacare.app.data.repository
 
-import com.kalazacare.app.data.local.PatientDao
-import com.kalazacare.app.data.local.toDomain
-import com.kalazacare.app.data.local.toEntity
 import com.kalazacare.app.data.model.*
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.postgrest
@@ -66,24 +63,10 @@ private fun Patient.toRow() = PatientRow(
     primaryDiagnosis = primaryDiagnosis,
 )
 
-class SupabasePatientRepository(
-    private val client: SupabaseClient,
-    private val patientDao: PatientDao,
-) : PatientRepository {
+class SupabasePatientRepository(private val client: SupabaseClient) : PatientRepository {
     private val table = "patients"
     override suspend fun getAllPatients(includeArchived: Boolean): List<Patient> {
-        // Offline cache foundation: on a live fetch, refresh the local cache;
-        // if the fetch itself fails (no connectivity), fall back to whatever
-        // was cached last. Only the patient list is cached so far — every
-        // other read in the app still requires a live connection.
-        val all = try {
-            val fresh = client.postgrest.from(table).select().decodeList<PatientRow>().map { it.toDomain() }
-            patientDao.clear()
-            patientDao.upsertAll(fresh.map { it.toEntity() })
-            fresh
-        } catch (_: Exception) {
-            patientDao.getAll().map { it.toDomain() }
-        }
+        val all = client.postgrest.from(table).select().decodeList<PatientRow>().map { it.toDomain() }
         return (if (includeArchived) all else all.filter { !it.isArchived }).sortedBy { it.name }
     }
     override suspend fun getPatientById(id: String): Patient? =
@@ -240,23 +223,34 @@ private fun MedicationEntry.withComputedStatus(): MedicationEntry {
     return if (computed != e.status) e.copy(status = computed) else e
 }
 
-/** A recurring dose is due every day regardless of its stored date; a one-off dose is due only on that date. */
-private fun MedicationEntry.isDueOn(date: LocalDate): Boolean = isRecurring || scheduledDate == date
-
 class SupabaseMedicationRepository(private val client: SupabaseClient) : MedicationRepository {
     private val table = "medications"
+
+    // A recurring dose is due every day regardless of its stored date; a one-off dose is
+    // due only on that date -- filtered in the query itself (is_recurring = true OR
+    // scheduled_date = date) instead of pulling every medication row and filtering on-device.
     override suspend fun getMedicationsForPatient(patientId: String, date: LocalDate): List<MedicationEntry> =
-        client.postgrest.from(table).select { filter { eq("patient_id", patientId) } }
-            .decodeList<MedicationRow>().map { it.toDomain() }
-            .filter { it.isDueOn(date) }.sortedBy { it.scheduleTime }
+        client.postgrest.from(table).select {
+            filter {
+                eq("patient_id", patientId)
+                or {
+                    eq("is_recurring", true)
+                    eq("scheduled_date", date.toString())
+                }
+            }
+        }.decodeList<MedicationRow>().map { it.toDomain() }.sortedBy { it.scheduleTime }
     override suspend fun getMedicationsForPatient(patientId: String): List<MedicationEntry> =
         client.postgrest.from(table).select { filter { eq("patient_id", patientId) } }
             .decodeList<MedicationRow>().map { it.toDomain() }.sortedBy { it.scheduleTime }
     override suspend fun getMedicationsForDate(date: LocalDate): List<MedicationEntry> =
-        getAllMedications().filter { it.isDueOn(date) }.sortedBy { it.scheduleTime }
-    override suspend fun getAllMedications(): List<MedicationEntry> =
-        client.postgrest.from(table).select().decodeList<MedicationRow>()
-            .map { it.toDomain() }.sortedByDescending { it.scheduledDate }
+        client.postgrest.from(table).select {
+            filter {
+                or {
+                    eq("is_recurring", true)
+                    eq("scheduled_date", date.toString())
+                }
+            }
+        }.decodeList<MedicationRow>().map { it.toDomain() }.sortedBy { it.scheduleTime }
     override suspend fun getMedicationById(id: String): MedicationEntry? =
         client.postgrest.from(table).select { filter { eq("id", id) } }.decodeSingleOrNull<MedicationRow>()?.toDomain()
     override suspend fun addMedication(entry: MedicationEntry) {
@@ -391,6 +385,9 @@ class SupabaseUtilityRepository(private val client: SupabaseClient) : UtilityRep
             .map { it.toDomain() }.sortedBy { it.displayOrder }
     override suspend fun addUtilityItem(item: UtilityItem) {
         client.postgrest.from(itemsTable).insert(item.copy(id = newId()).toRow())
+    }
+    override suspend fun updateUtilityItem(item: UtilityItem) {
+        client.postgrest.from(itemsTable).update(item.toRow()) { filter { eq("id", item.id) } }
     }
     override suspend fun deleteUtilityItem(id: String) {
         client.postgrest.from(itemsTable).update(mapOf("is_active" to false)) { filter { eq("id", id) } }

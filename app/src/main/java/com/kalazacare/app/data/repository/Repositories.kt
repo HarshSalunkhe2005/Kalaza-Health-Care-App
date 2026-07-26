@@ -47,7 +47,6 @@ interface MedicationRepository {
     suspend fun getMedicationsForPatient(patientId: String, date: LocalDate): List<MedicationEntry>
     suspend fun getMedicationsForPatient(patientId: String): List<MedicationEntry>
     suspend fun getMedicationsForDate(date: LocalDate): List<MedicationEntry>
-    suspend fun getAllMedications(): List<MedicationEntry>
     suspend fun getMedicationById(id: String): MedicationEntry?
     suspend fun addMedication(entry: MedicationEntry)
     suspend fun updateMedication(entry: MedicationEntry)
@@ -71,6 +70,7 @@ interface UtilityRepository {
     /** Includes deactivated items too, so historical records referencing them stay readable. */
     suspend fun getAllUtilityItems(): List<UtilityItem>
     suspend fun addUtilityItem(item: UtilityItem)
+    suspend fun updateUtilityItem(item: UtilityItem)
     suspend fun deleteUtilityItem(id: String)
 }
 

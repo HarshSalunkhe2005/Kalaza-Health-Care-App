@@ -1,17 +1,21 @@
 package com.kalazacare.app.ui.components
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.kalazacare.app.ui.theme.KalazaDarkMaroon
 import com.kalazacare.app.ui.theme.KalazaRed
+import com.kalazacare.app.ui.theme.StatusSuccess
 
 /**
  * Top app bar with the Kalaza Care dark maroon stripe at the top.
@@ -29,6 +33,7 @@ fun KalazaTopBar(
     title: String,
     onBack: (() -> Unit)? = null,
     onLogout: (() -> Unit)? = null,
+    onRefresh: (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     var showLogoutConfirm by remember { mutableStateOf(false) }
@@ -37,17 +42,16 @@ fun KalazaTopBar(
         TopAppBar(
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_launcher_foreground),
+                    Image(
+                        painter = painterResource(id = R.drawable.logo_kalaza),
                         contentDescription = "Kalaza Care Logo",
-                        modifier = Modifier.size(36.dp),
-                        tint = White
+                        modifier = Modifier.size(24.dp).clip(RoundedCornerShape(6.dp)),
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Column {
                         Text(
                             text = "Kalaza Care",
-                            style = MaterialTheme.typography.titleMedium,
+                            style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = White
                         )
@@ -74,6 +78,15 @@ fun KalazaTopBar(
             },
             actions = {
                 actions()
+                if (onRefresh != null) {
+                    IconButton(onClick = onRefresh) {
+                        Icon(
+                            imageVector = Icons.Filled.Refresh,
+                            contentDescription = "Refresh",
+                            tint = White
+                        )
+                    }
+                }
                 if (onLogout != null) {
                     IconButton(onClick = { showLogoutConfirm = true }) {
                         Icon(
@@ -110,7 +123,12 @@ fun KalazaTopBar(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showLogoutConfirm = false }) {
+                TextButton(
+                    onClick = { showLogoutConfirm = false },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = StatusSuccess
+                    )
+                ) {
                     Text("Cancel")
                 }
             }
