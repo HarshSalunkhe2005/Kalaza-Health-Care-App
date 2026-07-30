@@ -1,10 +1,14 @@
 package com.kalazacare.app.ui.login
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
@@ -14,8 +18,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -27,6 +33,42 @@ import com.kalazacare.app.ui.LoginState
 import com.kalazacare.app.ui.LoginViewModel
 import com.kalazacare.app.ui.components.KalazaTextField
 import com.kalazacare.app.ui.theme.KalazaRed
+import com.kalazacare.app.util.ALLOWED_GATEWAY_IPS
+import com.kalazacare.app.util.WIFI_GATE_ENABLED
+import com.kalazacare.app.util.currentWifiGatewayIp
+import com.kalazacare.app.util.wifiDebugDump
+import kotlinx.coroutines.delay
+
+private enum class WifiGateState { CHECKING, ALLOWED, WRONG_NETWORK }
+
+/**
+ * Testing-only bypass switch. Placed inside each blocking dialog's own content (not just
+ * floating behind it) because a real AlertDialog is a separate modal window -- nothing behind
+ * it, including a switch floating elsewhere in the same Box, can receive touches.
+ */
+@Composable
+private fun TestingSkipSwitchRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 12.dp)) {
+        Text(
+            text = "Skip Wi-Fi check (testing)",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = KalazaRed,
+                checkedBorderColor = KalazaRed,
+                uncheckedThumbColor = KalazaRed,
+                uncheckedTrackColor = MaterialTheme.colorScheme.surface,
+                uncheckedBorderColor = KalazaRed,
+            ),
+        )
+    }
+}
 
 @Composable
 fun LoginScreen(
@@ -37,6 +79,29 @@ fun LoginScreen(
     var name by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    var gateState by remember { mutableStateOf(if (WIFI_GATE_ENABLED) WifiGateState.CHECKING else WifiGateState.ALLOWED) }
+    var detectedGatewayIp by remember { mutableStateOf<String?>(null) }
+    // On-screen override for quick testing -- tap the switch at the bottom of the screen to skip
+    // the whole Wi-Fi gate without touching code. Resets to off every fresh app launch.
+    var skipWifiCheckForTesting by remember { mutableStateOf(false) }
+    val effectiveGateState = if (skipWifiCheckForTesting) WifiGateState.ALLOWED else gateState
+
+    fun checkWifiNow() {
+        detectedGatewayIp = currentWifiGatewayIp(context)
+        gateState = if (detectedGatewayIp != null && ALLOWED_GATEWAY_IPS.contains(detectedGatewayIp)) {
+            WifiGateState.ALLOWED
+        } else {
+            WifiGateState.WRONG_NETWORK
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (!WIFI_GATE_ENABLED) return@LaunchedEffect
+        delay(500) // brief, deliberate pause so the "checking" spinner is actually visible
+        checkWifiNow()
+    }
 
     LaunchedEffect(loginState) {
         if (loginState is LoginState.Success) {
@@ -55,7 +120,8 @@ fun LoginScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(32.dp),
+                .padding(32.dp)
+                .blur(if (effectiveGateState == WifiGateState.ALLOWED) 0.dp else 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
@@ -65,7 +131,7 @@ fun LoginScreen(
                 contentDescription = "Kalaza Care Logo",
                 modifier = Modifier.size(120.dp).clip(RoundedCornerShape(16.dp)),
             )
-            
+
             Text(
                 text = "Kalaza Care",
                 style = MaterialTheme.typography.headlineLarge,
@@ -125,6 +191,7 @@ fun LoginScreen(
             // Login button
             Button(
                 onClick = { viewModel.login(name, password) },
+                enabled = effectiveGateState == WifiGateState.ALLOWED,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
@@ -144,6 +211,49 @@ fun LoginScreen(
                     )
                 }
             }
+        }
+
+        when (effectiveGateState) {
+            WifiGateState.CHECKING -> {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(color = KalazaRed)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Checking Wi-Fi network…",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            WifiGateState.WRONG_NETWORK -> {
+                AlertDialog(
+                    onDismissRequest = {},
+                    title = { Text("Wrong Wi-Fi Network") },
+                    text = {
+                        Column(modifier = Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                            Text("Please connect to the facility's Wi-Fi network to continue.")
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "Debug info:\n" + wifiDebugDump(context),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            TestingSkipSwitchRow(skipWifiCheckForTesting) { skipWifiCheckForTesting = it }
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = { context.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) },
+                            colors = ButtonDefaults.buttonColors(containerColor = KalazaRed),
+                        ) { Text("Open Wi-Fi Settings") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { checkWifiNow() }) { Text("Retry") }
+                    },
+                )
+            }
+            WifiGateState.ALLOWED -> {}
         }
     }
 }
