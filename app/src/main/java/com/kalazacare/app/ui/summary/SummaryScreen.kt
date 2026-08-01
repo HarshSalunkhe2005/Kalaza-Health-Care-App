@@ -22,6 +22,7 @@ import com.kalazacare.app.ui.SummaryViewModel
 import com.kalazacare.app.ui.components.EmptyState
 import com.kalazacare.app.ui.components.KalazaTopBar
 import com.kalazacare.app.ui.theme.KalazaRed
+import com.kalazacare.app.util.DateUtils
 import com.kalazacare.app.util.DownloadsSaver
 import com.kalazacare.app.util.XlsxWriter
 import kotlinx.coroutines.launch
@@ -63,8 +64,9 @@ fun SummaryScreen(
                             scope.launch {
                                 isExporting = true
                                 val report = viewModel.buildRangeReport()
-                                val savedName = exportXlsxToDownloads(context, startDate, endDate, stats, report)
-                                val message = if (savedName != null) "Saved to Downloads: $savedName" else "Export failed"
+                                val savedCount = exportPerPatientReportsToDownloads(context, startDate, endDate, report)
+                                val message = if (savedCount == report.size) "Saved $savedCount patient report(s) to Downloads"
+                                    else "Saved $savedCount of ${report.size} patient report(s) — some failed"
                                 Toast.makeText(context, message, Toast.LENGTH_LONG).show()
                                 isExporting = false
                             }
@@ -191,84 +193,101 @@ fun SummaryScreen(
     }
 }
 
-// CHANGE 3: xlsx workbook — a Summary tab plus one tab per patient — saved
-// straight to Downloads (no share sheet).
-private fun exportXlsxToDownloads(
+private val DASH = "—"
+
+/** "value" if present, else the dash placeholder — matches the reference report template. */
+private fun field(value: String, suffix: String = ""): String = if (value.isBlank()) DASH else "$value$suffix"
+
+private fun vitalsLine(v: com.kalazacare.app.data.model.VitalRecord): String =
+    "Pulse: ${field(v.pulse)} | BP: ${field(v.bp)} | SpO₂: ${field(v.spo2, "%")} | " +
+        "Temp: ${field(v.temperature, "°F")} | Fasting: ${field(v.sugarFasting)} | PP: ${field(v.sugarPP)}"
+
+private fun utilityBlock(u: com.kalazacare.app.data.model.UtilityRecord): String =
+    "Issued To: ${field(u.issuedToCaregiver)}\nIssued By: ${field(u.issuedBySupervisor)} | Checked: ${field(u.checkedBy)}"
+
+private fun noteLine(n: com.kalazacare.app.data.model.CareNote): String =
+    "${n.note} (${DateUtils.formatTime(n.timestamp.toLocalTime())})"
+
+/**
+ * A recurring dose's `medications` row only reflects *today's* live status (it resets daily --
+ * see MedicationRepository.withComputedStatus), so for any other day in range, whether it was
+ * actually given comes from the permanent `medication_evidence_log` instead (every real
+ * administration requires photo evidence, so a real administration always has a log entry).
+ */
+private fun medicationLineForDay(
+    m: com.kalazacare.app.data.model.MedicationEntry,
+    date: LocalDate,
+    administeredEvidence: com.kalazacare.app.data.model.MedicationEvidenceEvent?,
+): String {
+    val base = "${m.medicineName} — ${m.dose}"
+    return when {
+        administeredEvidence != null ->
+            "$base — ADMINISTERED (${DateUtils.formatTime(administeredEvidence.occurredAt.toLocalTime())})"
+        date.isAfter(LocalDate.now()) -> "$base — Scheduled (${DateUtils.formatTime(m.scheduleTime)})"
+        date.isEqual(LocalDate.now()) ->
+            "$base — ${m.status.name}" + if (m.status == com.kalazacare.app.data.model.MedStatus.PENDING) " (${DateUtils.formatTime(m.scheduleTime)})" else ""
+        else -> "$base — Not Given"
+    }
+}
+
+private fun sanitizeFileNameComponent(s: String): String =
+    s.trim().replace(Regex("[^A-Za-z0-9]+"), "_").trim('_').ifBlank { "Patient" }
+
+/**
+ * Replaces the old single combined workbook with one styled "Simple Patient Report" .xlsx
+ * per patient (matching the reference template), each saved straight to Downloads. Returns
+ * how many of the N patients' files were saved successfully.
+ */
+private fun exportPerPatientReportsToDownloads(
     context: Context,
     startDate: LocalDate,
     endDate: LocalDate,
-    stats: SummaryStats,
     report: List<PatientRangeSummary>,
-): String? {
-    val rangeLabel = if (startDate == endDate) startDate.toString() else "${startDate}_to_${endDate}"
+): Int {
     val dateFmt = DateTimeFormatter.ofPattern("dd MMM yyyy")
-
-    val writer = XlsxWriter()
-
-    val summaryRows = mutableListOf(
-        listOf("Kalaza Care — Summary Report"),
-        listOf("Range", "${startDate.format(dateFmt)} to ${endDate.format(dateFmt)}"),
-        listOf("Generated", java.time.LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd MMM yyyy HH:mm"))),
-        listOf(),
-        listOf("Metric", "Value"),
-        listOf("Vitals Recorded", stats.vitalsRecorded.toString()),
-        listOf("Medications Given", stats.medsAdministered.toString()),
-        listOf("Medications Pending", stats.medsPending.toString()),
-        listOf("Utility Logs", stats.utilityLogs.toString()),
-        listOf("Approvals Pending", stats.pendingApprovals.toString()),
-        listOf(),
-        listOf("Patient", "Room", "Primary Diagnosis"),
-    )
-    report.forEach { r ->
-        summaryRows.add(listOf(r.patient.name, r.patient.roomNo, r.patient.primaryDiagnosis))
-    }
-    writer.addSheet("Summary", summaryRows)
-
-    report.forEach { r ->
-        val rows = mutableListOf<List<String>>()
-        rows.add(listOf(r.patient.name))
-        rows.add(listOf())
-        rows.add(listOf("Vitals"))
-        rows.add(listOf("Date", "Time", "Pulse", "BP", "SpO2", "Temp", "Fasting", "PP", "Signed By"))
-        r.vitals.forEach { v ->
-            rows.add(listOf(v.date.toString(), v.time.toString(), v.pulse, v.bp, v.spo2, v.temperature, v.sugarFasting, v.sugarPP, v.signedBy))
-        }
-        rows.add(listOf())
-        rows.add(listOf("Medications"))
-        rows.add(listOf("Date", "Time", "Medicine", "Dose", "Status", "Administered By"))
-        r.medications.forEach { m ->
-            rows.add(listOf(m.scheduledDate.toString(), m.scheduleTime.toString(), m.medicineName, m.dose, m.status.name, m.administeredBy))
-        }
-        rows.add(listOf())
-        rows.add(listOf("Utility Records"))
-        rows.add(listOf("Date", "Time", "Issued To", "Issued By", "Checked By"))
-        r.utility.forEach { u ->
-            rows.add(listOf(u.date.toString(), u.time.toString(), u.issuedToCaregiver, u.issuedBySupervisor, u.checkedBy))
-        }
-        rows.add(listOf())
-        rows.add(listOf("Doctor Visits"))
-        rows.add(listOf("Date", "Time", "Doctor", "Specialty", "Notes"))
-        r.visits.forEach { v ->
-            rows.add(listOf(v.date.toString(), v.time.toString(), v.doctorName, v.specialty, v.notes))
-        }
-        rows.add(listOf())
-        rows.add(listOf("Care Notes"))
-        rows.add(listOf("Timestamp", "Staff", "Note"))
-        r.notes.forEach { n ->
-            rows.add(listOf(n.timestamp.toString(), n.staffName, n.note))
-        }
-        writer.addSheet(r.patient.name, rows)
-    }
-
-    val bytes = writer.build()
-    val filename = "KalazaCare_Report_$rangeLabel.xlsx"
+    val rangeLabel = if (startDate == endDate) startDate.format(dateFmt) else "${startDate.format(dateFmt)} – ${endDate.format(dateFmt)}"
+    val fileRangeLabel = if (startDate == endDate) startDate.toString() else "${startDate}_to_$endDate"
     val mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    return try {
-        val uri = DownloadsSaver.saveToDownloads(context, filename, mimeType, bytes)
-        if (uri != null) filename else null
-    } catch (e: Exception) {
-        null
+
+    val dates = mutableListOf<LocalDate>()
+    var d = startDate
+    while (!d.isAfter(endDate)) { dates.add(d); d = d.plusDays(1) }
+
+    var savedCount = 0
+    report.forEach { r ->
+        val rows = dates.map { date ->
+            // Recurring doses apply to every day; one-time doses only on their own scheduled date.
+            val medsToday = r.medications.filter { m -> if (m.isRecurring) true else m.scheduledDate == date }
+            val vitalsToday = r.vitals.filter { it.date == date }
+            val utilityToday = r.utility.filter { it.date == date }
+            val notesToday = r.notes.filter { it.timestamp.toLocalDate() == date }.sortedBy { it.timestamp }
+
+            XlsxWriter.ReportRow(
+                date = date.format(dateFmt),
+                diagnosis = field(r.patient.primaryDiagnosis),
+                medication = if (medsToday.isEmpty()) DASH else medsToday.joinToString("\n") { m ->
+                    val evidence = r.administrationEvidence
+                        .filter { it.medicationId == m.id && it.occurredAt.toLocalDate() == date }
+                        .maxByOrNull { it.occurredAt }
+                    medicationLineForDay(m, date, evidence)
+                },
+                vitals = if (vitalsToday.isEmpty()) DASH else vitalsToday.joinToString("\n") { vitalsLine(it) },
+                utilities = if (utilityToday.isEmpty()) DASH else utilityToday.joinToString("\n\n") { utilityBlock(it) },
+                notes = if (notesToday.isEmpty()) DASH else notesToday.joinToString("\n") { noteLine(it) },
+                signedBy = notesToday.lastOrNull()?.staffName?.let { field(it) } ?: DASH,
+            )
+        }
+
+        val bytes = XlsxWriter().buildPatientReport(r.patient.name, rangeLabel, rows)
+        val filename = "KalazaCare_${sanitizeFileNameComponent(r.patient.name)}_$fileRangeLabel.xlsx"
+        val saved = try {
+            DownloadsSaver.saveToDownloads(context, filename, mimeType, bytes) != null
+        } catch (e: Exception) {
+            false
+        }
+        if (saved) savedCount++
     }
+    return savedCount
 }
 
 @Composable
