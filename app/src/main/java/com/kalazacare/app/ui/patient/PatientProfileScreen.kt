@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -41,7 +42,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 
 /**
  * Patient Profile — the central hub for all patient interactions.
- * Uses a tabbed layout with 6 tabs: Info | Vitals | MAR | Utilities | Visits | Notes
+ * Uses a tabbed layout with 6 tabs: Info | Vitals | Med | Utilities | Visits | Notes
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -78,7 +79,7 @@ fun PatientProfileScreen(
         loadAttempted = true
     }
 
-    val tabs = listOf("Info", "Vitals", "MAR", "Utilities", "Visits", "Notes")
+    val tabs = listOf("Info", "Vitals", "Med", "Utilities", "Visits", "Notes")
     val pagerState = rememberPagerState(pageCount = { tabs.size })
     val coroutineScope = rememberCoroutineScope()
 
@@ -653,6 +654,11 @@ private fun MarTabContent(
     }
 }
 
+/** ISO day-of-week number (1=Mon..7=Sun, matches LocalDate.dayOfWeek.value) to its short chip label. */
+private val DAY_OF_WEEK_LABELS = listOf(
+    1 to "Mon", 2 to "Tue", 3 to "Wed", 4 to "Thu", 5 to "Fri", 6 to "Sat", 7 to "Sun",
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AddMedicationDialog(
@@ -664,8 +670,11 @@ private fun AddMedicationDialog(
     var dose by remember { mutableStateOf("") }
     var quantity by remember { mutableStateOf("") }
     var scheduleTime by remember { mutableStateOf(java.time.LocalTime.of(8, 0)) }
+    var tag by remember { mutableStateOf<com.kalazacare.app.data.model.DoseTag?>(null) }
     var notes by remember { mutableStateOf("") }
     var isRecurring by remember { mutableStateOf(true) }
+    // ISO day-of-week numbers (1=Mon..7=Sun); empty means every day.
+    var recurringDays by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var scheduledDate by remember { mutableStateOf(java.time.LocalDate.now()) }
     var showDatePicker by remember { mutableStateOf(false) }
     val datePickerState = rememberDatePickerState(
@@ -684,6 +693,8 @@ private fun AddMedicationDialog(
                 }
                 Text("Time:", style = MaterialTheme.typography.bodyMedium)
                 com.kalazacare.app.ui.components.TimeOfDayField(initial = scheduleTime, onChange = { scheduleTime = it })
+                Text("Tag (required — matched against the Scan QR):", style = MaterialTheme.typography.bodyMedium)
+                com.kalazacare.app.ui.components.DoseTagPicker(selected = tag, onSelect = { tag = it })
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.weight(1f)) {
                         Text("Give every day", style = MaterialTheme.typography.bodyMedium)
@@ -706,7 +717,36 @@ private fun AddMedicationDialog(
                         ),
                     )
                 }
-                if (!isRecurring) {
+                if (isRecurring) {
+                    Column {
+                        Text("Repeat on", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Leave all unselected to repeat every day",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            DAY_OF_WEEK_LABELS.forEach { (isoDay, label) ->
+                                FilterChip(
+                                    selected = isoDay in recurringDays,
+                                    onClick = {
+                                        recurringDays = if (isoDay in recurringDays) recurringDays - isoDay else recurringDays + isoDay
+                                    },
+                                    label = { Text(label) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = KalazaRed,
+                                        selectedLabelColor = White,
+                                        labelColor = MaterialTheme.colorScheme.onSurface,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                } else {
                     OutlinedButton(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Default.CalendarMonth, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
@@ -719,6 +759,7 @@ private fun AddMedicationDialog(
         confirmButton = {
             Button(
                 onClick = {
+                    val chosenTag = tag ?: return@Button
                     onSave(
                         com.kalazacare.app.data.model.MedicationEntry(
                             patientId = patientId,
@@ -726,14 +767,16 @@ private fun AddMedicationDialog(
                             dose = dose,
                             quantity = quantity,
                             scheduleTime = scheduleTime,
+                            tag = chosenTag,
                             scheduledDate = if (isRecurring) java.time.LocalDate.now() else scheduledDate,
                             isRecurring = isRecurring,
+                            recurringDays = if (isRecurring) recurringDays else emptySet(),
                             notes = notes,
                         )
                     )
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = KalazaRed),
-                enabled = name.isNotBlank(),
+                enabled = name.isNotBlank() && tag != null,
             ) { Text("Add") }
         },
         dismissButton = {

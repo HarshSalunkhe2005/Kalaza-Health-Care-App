@@ -219,13 +219,14 @@ private fun medicationLineForDay(
     date: LocalDate,
     administeredEvidence: com.kalazacare.app.data.model.MedicationEvidenceEvent?,
 ): String {
-    val base = "${m.medicineName} — ${m.dose}"
+    // Scheduled time is always shown now, regardless of status -- previously it only appeared
+    // for Scheduled/PENDING rows, so OVERDUE and "Not Given" rows gave no timing at all.
+    val base = "${m.medicineName} — ${m.dose} — ${DateUtils.formatTime(m.scheduleTime)}"
     return when {
         administeredEvidence != null ->
             "$base — ADMINISTERED (${DateUtils.formatTime(administeredEvidence.occurredAt.toLocalTime())})"
-        date.isAfter(LocalDate.now()) -> "$base — Scheduled (${DateUtils.formatTime(m.scheduleTime)})"
-        date.isEqual(LocalDate.now()) ->
-            "$base — ${m.status.name}" + if (m.status == com.kalazacare.app.data.model.MedStatus.PENDING) " (${DateUtils.formatTime(m.scheduleTime)})" else ""
+        date.isAfter(LocalDate.now()) -> "$base — Scheduled"
+        date.isEqual(LocalDate.now()) -> "$base — ${m.status.name}"
         else -> "$base — Not Given"
     }
 }
@@ -256,8 +257,12 @@ private fun exportPerPatientReportsToDownloads(
     var savedCount = 0
     report.forEach { r ->
         val rows = dates.map { date ->
-            // Recurring doses apply to every day; one-time doses only on their own scheduled date.
-            val medsToday = r.medications.filter { m -> if (m.isRecurring) true else m.scheduledDate == date }
+            // Recurring doses apply to every day unless narrowed to specific weekdays
+            // (recurringDays); one-time doses only on their own scheduled date.
+            val medsToday = r.medications.filter { m ->
+                if (m.isRecurring) m.recurringDays.isEmpty() || date.dayOfWeek.value in m.recurringDays
+                else m.scheduledDate == date
+            }
             val vitalsToday = r.vitals.filter { it.date == date }
             val utilityToday = r.utility.filter { it.date == date }
             val notesToday = r.notes.filter { it.timestamp.toLocalDate() == date }.sortedBy { it.timestamp }

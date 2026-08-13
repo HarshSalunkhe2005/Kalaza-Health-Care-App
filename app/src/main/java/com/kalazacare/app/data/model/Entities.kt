@@ -37,6 +37,15 @@ enum class AllotmentStatus { NOT_ALLOTTED, ALLOTTED }
 
 enum class AllotmentRequestStatus { PENDING, FULFILLED }
 
+/**
+ * Coarse dosing bucket a medication is assigned to, independent of its exact
+ * [MedicationEntry.scheduleTime]. Drives both the daily reminder notification
+ * and the batch-QR match on the Scan tab — the QR staff prints for a patient
+ * encodes one of these three, and a scan only unlocks that patient's doses
+ * tagged with the matching bucket.
+ */
+enum class DoseTag { MORNING, AFTERNOON, EVENING }
+
 // CHANGE 4: visits get an isConfirmed + isArchived flag
 // ─────────────────────────────────────────────────────────────────────────────
 // Core Entities
@@ -101,12 +110,21 @@ data class MedicationEntry(
     val dose: String = "",
     val quantity: String = "",
     val scheduleTime: LocalTime = LocalTime.now(),
+    // Mandatory dosing bucket for QR batch-scan matching — see [DoseTag]. Every
+    // entry created through the UI must set this explicitly (no silent default).
+    val tag: DoseTag = DoseTag.MORNING,
     val scheduledDate: LocalDate = LocalDate.now(),
     // Most medications repeat every day — for those, [scheduledDate] is just
     // "the day this entry was created" and is ignored when deciding whether
     // it's due today. Set this false only for a genuine one-off dose that
     // should appear solely on [scheduledDate].
     val isRecurring: Boolean = true,
+    // Only meaningful when [isRecurring] is true. ISO day-of-week numbers
+    // (1=Monday .. 7=Sunday, matching LocalDate.dayOfWeek.value) the dose is
+    // due on. Empty means "every day" — the original, still-default recurring
+    // behavior; every dose that existed before this field was added keeps
+    // working unchanged.
+    val recurringDays: Set<Int> = emptySet(),
     val status: MedStatus = MedStatus.PENDING,
     val administeredBy: String = "",
     val administeredAt: LocalDateTime? = null,
