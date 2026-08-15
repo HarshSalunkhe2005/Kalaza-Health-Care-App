@@ -3,6 +3,8 @@ package com.kalazacare.app.data.repository
 import com.kalazacare.app.data.model.*
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.postgrest
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.time.LocalDate
@@ -140,6 +142,7 @@ class SupabaseVitalsRepository(private val client: SupabaseClient) : VitalsRepos
 // Medication (MAR)
 // ─────────────────────────────────────────────────────────────────────────────
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 private data class MedicationRow(
     val id: String,
@@ -147,11 +150,22 @@ private data class MedicationRow(
     @SerialName("medicine_name") val medicineName: String = "",
     val dose: String = "", val quantity: String = "",
     @SerialName("schedule_time") val scheduleTime: String = LocalTime.now().toString(),
+    // supabase-kt's Json encoder has encodeDefaults=false baked in with no
+    // override — a value equal to its Kotlin default (e.g. a fresh "MORNING"
+    // tag) is silently dropped from the request instead of sent, which for
+    // this NOT NULL column meant a 23502 on insert and a no-op on update.
+    // @EncodeDefault(ALWAYS) forces it into every request regardless.
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val tag: String = "MORNING",
     @SerialName("scheduled_date") val scheduledDate: String = LocalDate.now().toString(),
     @SerialName("is_recurring") val isRecurring: Boolean = true,
     // Comma-separated ISO day-of-week numbers (1=Mon..7=Sun), e.g. "1,3,5".
     // Empty/blank means every day -- see MedicationEntry.recurringDays.
+    // @EncodeDefault(ALWAYS) for the same reason as [tag] above -- clearing
+    // a dose back to "every day" (recurringDays = "") matches this field's
+    // Kotlin default and would otherwise get silently dropped from an edit's
+    // PATCH request, leaving the old weekday restriction in place server-side.
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     @SerialName("recurring_days") val recurringDays: String = "",
     val status: String = "PENDING",
     @SerialName("administered_by") val administeredBy: String = "",
