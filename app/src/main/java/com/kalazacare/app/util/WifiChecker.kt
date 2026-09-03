@@ -1,10 +1,8 @@
 package com.kalazacare.app.util
 
 import android.content.Context
-import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
-import androidx.core.location.LocationManagerCompat
 
 /**
  * Master switch for the whole Wi-Fi gate — set to false to skip the check entirely and let
@@ -12,7 +10,7 @@ import androidx.core.location.LocationManagerCompat
  * the SSID-detection issue on newer Android is still being tracked down.
  * MUST be back to true before this ships to Kalaza Care.
  */
-const val WIFI_GATE_ENABLED = false
+const val WIFI_GATE_ENABLED = true
 
 /**
  * The facility Wi-Fi router(s)' gateway/local IP address (e.g. "192.0.2.3") -- the ONLY way
@@ -27,7 +25,7 @@ const val WIFI_GATE_ENABLED = false
  * connected network -> look for "Gateway" or "Router" under its IP details (may be under an
  * "Advanced" section depending on the phone). Add that value to this set.
  */
-val ALLOWED_GATEWAY_IPS = setOf("192.0.2.1", "192.0.2.2", "10.0.2.2")
+val ALLOWED_GATEWAY_IPS = setOf("192.0.2.1", "192.0.2.2")
 
 /**
  * The connected Wi-Fi network's gateway/router IP address, or null if not connected to Wi-Fi or
@@ -41,20 +39,4 @@ fun currentWifiGatewayIp(context: Context): String? {
     } ?: return null
     val linkProperties = connectivityManager.getLinkProperties(wifiNetwork) ?: return null
     return linkProperties.routes.firstOrNull { it.isDefaultRoute }?.gateway?.hostAddress
-}
-
-fun isOnAllowedWifi(context: Context): Boolean {
-    val gateway = currentWifiGatewayIp(context)
-    return gateway != null && ALLOWED_GATEWAY_IPS.contains(gateway)
-}
-
-/**
- * Beyond the app's own runtime permission, Android also silently refuses to reveal the real
- * SSID (returning "<unknown ssid>") unless the device's system-wide Location Services toggle is
- * on -- a classic gotcha since this has nothing to do with the app actually reading location.
- * Checked separately so the UI can tell "wrong network" apart from "can't check yet".
- */
-fun isLocationServicesEnabled(context: Context): Boolean {
-    val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-    return LocationManagerCompat.isLocationEnabled(locationManager)
 }
