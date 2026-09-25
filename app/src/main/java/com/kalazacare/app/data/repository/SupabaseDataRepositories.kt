@@ -251,7 +251,8 @@ private fun MedicationEntry.withComputedStatus(): MedicationEntry {
     if (e.status != MedStatus.PENDING && e.status != MedStatus.OVERDUE) return e
     val effectiveDate = if (e.isRecurring) LocalDate.now() else e.scheduledDate
     val scheduledAt = LocalDateTime.of(effectiveDate, e.scheduleTime)
-    val computed = if (scheduledAt.isBefore(LocalDateTime.now())) MedStatus.OVERDUE else MedStatus.PENDING
+    // Still PENDING through the whole giving window; only Missed once it has closed.
+    val computed = if (scheduledAt.plusMinutes(DOSE_WINDOW_MINUTES.toLong()).isBefore(LocalDateTime.now())) MedStatus.OVERDUE else MedStatus.PENDING
     return if (computed != e.status) e.copy(status = computed) else e
 }
 
@@ -480,6 +481,9 @@ class SupabaseUtilityRepository(private val client: SupabaseClient) : UtilityRep
     }
     override suspend fun updateUtilityRecord(record: UtilityRecord) {
         client.postgrest.from(recordsTable).update(record.toRow()) { filter { eq("id", record.id) } }
+    }
+    override suspend fun deleteUtilityRecord(id: String) {
+        client.postgrest.from(recordsTable).delete { filter { eq("id", id) } }
     }
     override suspend fun getUtilityItems(): List<UtilityItem> = getAllUtilityItems().filter { it.isActive }
     override suspend fun getAllUtilityItems(): List<UtilityItem> =
@@ -768,12 +772,12 @@ class SupabaseNotificationRepository(private val client: SupabaseClient) : Notif
     private val table = "notifications"
     override suspend fun getForRecipient(staffId: String, role: UserRole): List<AppNotification> =
         client.postgrest.from(table).select {
-            filter { or { eq("recipient_staff_id", staffId); eq("recipient_role", role.name) } }
+            filter { or { eq("recipient_staff_id", staffId); eq("recipient_role", role.notificationRole().name) } }
         }.decodeList<NotificationRow>().map { it.toDomain() }.sortedByDescending { it.timestamp }
     override suspend fun getUnreadCountForRecipient(staffId: String, role: UserRole): Int =
         client.postgrest.from(table).select {
             filter {
-                or { eq("recipient_staff_id", staffId); eq("recipient_role", role.name) }
+                or { eq("recipient_staff_id", staffId); eq("recipient_role", role.notificationRole().name) }
                 eq("is_read", false)
             }
         }.decodeList<NotificationRow>().size
@@ -786,7 +790,7 @@ class SupabaseNotificationRepository(private val client: SupabaseClient) : Notif
     override suspend fun markAllReadForRecipient(staffId: String, role: UserRole) {
         client.postgrest.from(table).update(mapOf("is_read" to true)) {
             filter {
-                or { eq("recipient_staff_id", staffId); eq("recipient_role", role.name) }
+                or { eq("recipient_staff_id", staffId); eq("recipient_role", role.notificationRole().name) }
                 eq("is_read", false)
             }
         }

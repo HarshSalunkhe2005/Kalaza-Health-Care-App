@@ -12,11 +12,17 @@ import java.time.LocalTime
 // CHANGE 9: ADMIN → SUPER_ADMIN (keeps all prior admin powers). The restricted,
 // photo-audit-only ADMIN role added alongside that rename was later removed
 // entirely (photo evidence was replaced by QR-scan evidence, and the role had
-// no other purpose) — only three roles remain.
-enum class UserRole { SUPER_ADMIN, STAFF, SUPERVISOR }
+// no other purpose) — only three roles remained.
+// ADMIN is back with a different meaning: same privileges as SUPER_ADMIN, but created
+// (and removable) only by the Super Admin, who themself can never be removed.
+enum class UserRole { SUPER_ADMIN, ADMIN, STAFF, SUPERVISOR }
+
+/** Notifications addressed to SUPER_ADMIN are also for Admins (mirrors current_staff_role() in the DB). */
+fun UserRole.notificationRole(): UserRole = if (this == UserRole.ADMIN) UserRole.SUPER_ADMIN else this
 
 fun UserRole.displayLabel(): String = when (this) {
     UserRole.SUPER_ADMIN -> "Super Admin"
+    UserRole.ADMIN       -> "Admin"
     UserRole.STAFF       -> "Regular Staff"
     UserRole.SUPERVISOR  -> "Supervisor"
 }
@@ -32,6 +38,9 @@ enum class ApprovalEntityType { PATIENT, DOCTOR_VISIT, VITAL, UTILITY, CARE_NOTE
 enum class ApprovalAction { EDIT, DELETE }
 
 enum class MedStatus { PENDING, ADMINISTERED, OVERDUE }
+
+/** A dose can be given from its scheduled time until this many minutes after; past that it's Missed (OVERDUE). */
+const val DOSE_WINDOW_MINUTES = 60
 
 enum class AllotmentStatus { NOT_ALLOTTED, ALLOTTED }
 
