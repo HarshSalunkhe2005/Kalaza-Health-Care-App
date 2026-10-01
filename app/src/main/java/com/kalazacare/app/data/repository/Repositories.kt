@@ -19,7 +19,13 @@ interface AuthRepository {
      * rather than let the app run with no identity behind it.
      */
     suspend fun restoreSession(): Staff?
-    fun logout()
+    /**
+     * [clearPushToken] = false for the 15-min idle auto-logout: same person, same phone, just
+     * locked for security — clearing the token there would silently kill their own push
+     * notifications until they next open the app. Only an explicit Logout tap (someone
+     * deliberately leaving, or handing the phone to someone else) should clear it.
+     */
+    fun logout(clearPushToken: Boolean = true)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -65,8 +71,7 @@ interface MedicationRepository {
     suspend fun updateMedication(entry: MedicationEntry)
     suspend fun deleteMedication(id: String)
     suspend fun markAdministered(id: String, staffName: String, scannedCode: String)
-    suspend fun allotMedication(id: String, staffId: String, staffName: String, scannedCode: String)
-    /** The permanent compliance record of allotment/administration QR scans — see [MedicationEvidenceEvent]. */
+    /** The permanent compliance record of administration QR scans — see [MedicationEvidenceEvent]. */
     suspend fun getEvidenceLog(): List<MedicationEvidenceEvent>
     /** Per-day given/missed outcomes for every dose of this patient — see [MedicationHistoryEntry]. */
     suspend fun getAdministrationHistory(patientId: String): List<MedicationHistoryEntry>
@@ -124,14 +129,6 @@ interface ApprovalRepository {
     suspend fun approve(id: String, reviewerId: String, reviewerName: String)
     suspend fun reject(id: String, reviewerId: String, reviewerName: String, reason: String)
     suspend fun submitRequest(request: ApprovalRequest)
-}
-
-interface AllotmentRequestRepository {
-    suspend fun getAllRequests(): List<AllotmentRequest>
-    suspend fun getPendingRequests(): List<AllotmentRequest>
-    suspend fun submitRequest(request: AllotmentRequest)
-    suspend fun fulfillRequest(id: String, staffId: String, staffName: String)
-    suspend fun getByMedicationEntryId(medicationEntryId: String): AllotmentRequest?
 }
 
 interface NotificationRepository {

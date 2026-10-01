@@ -32,7 +32,6 @@ import com.kalazacare.app.ui.config.ConfigScreen
 import com.kalazacare.app.ui.dashboard.DashboardScreen
 import com.kalazacare.app.ui.dashboard.SuperAdminOverviewScreen
 import com.kalazacare.app.ui.login.LoginScreen
-import com.kalazacare.app.ui.medicine.MedicineScreen
 import com.kalazacare.app.ui.notifications.NotificationScreen
 import com.kalazacare.app.ui.patient.AddEditPatientScreen
 import com.kalazacare.app.ui.patient.PatientProfileScreen
@@ -51,18 +50,17 @@ object Routes {
     const val DASHBOARD       = "dashboard"
     const val SUPER_ADMIN_OVERVIEW = "super_admin_overview"
     const val TODO_LIST       = "todo_list"
-    const val PATIENT_PROFILE = "patient/{patientId}"
+    const val PATIENT_PROFILE = "patient/{patientId}?tab={tab}"
     const val PATIENT_NEW     = "patient/new"
     const val PATIENT_EDIT    = "patient/{patientId}/edit"
     const val APPROVAL_QUEUE  = "approval"
     const val AUDIT_LOG       = "auditlog"
     const val CONFIG          = "config"
     const val SUMMARY         = "summary"
-    const val MEDICINE        = "medicine"
     const val SCAN            = "scan"
     const val NOTIFICATIONS   = "notifications"
 
-    fun patientProfile(id: String) = "patient/$id"
+    fun patientProfile(id: String, tab: Int = 0) = "patient/$id?tab=$tab"
     fun patientEdit(id: String)    = "patient/$id/edit"
 }
 
@@ -108,21 +106,25 @@ fun KalazaNavHost(
             approvalRepo    = app.approvalRepository,
             auditRepo       = app.auditRepository,
             staffRepo       = app.staffRepository,
-            allotmentRequestRepo = app.allotmentRequestRepository,
             notificationRepo = app.notificationRepository,
             syncManager = app.syncManager,
         )
     }
 
     // Logout handler — clears local session, signs out of Supabase Auth
-    // server-side, and navigates back to login
-    val onLogout: () -> Unit = {
-        app.authRepository.logout()
+    // server-side, and navigates back to login. clearPushToken is false only for the
+    // idle auto-logout below (same person/phone, just locked) so that case doesn't
+    // kill their own notifications until they next open the app. Every screen keeps
+    // using the plain onLogout below (an explicit tap always clears the token) —
+    // performLogout is only for the auto-logout timer's own, deliberately different, call.
+    val performLogout: (clearPushToken: Boolean) -> Unit = { clearPushToken ->
+        app.authRepository.logout(clearPushToken)
         SessionManager.logout()
         navController.navigate(Routes.LOGIN) {
             popUpTo(0) { inclusive = true }
         }
     }
+    val onLogout: () -> Unit = { performLogout(true) }
 
     // MainActivity's own gate already tries to repopulate SessionManager from a still-valid
     // Supabase session before this composes; if that failed (session actually expired, or the
@@ -153,7 +155,7 @@ fun KalazaNavHost(
     // Routes where bottom nav should be visible
     val bottomNavRoutes = setOf(
         Routes.DASHBOARD, Routes.SUPER_ADMIN_OVERVIEW, Routes.TODO_LIST, Routes.APPROVAL_QUEUE,
-        Routes.AUDIT_LOG, Routes.CONFIG, Routes.SUMMARY, Routes.MEDICINE, Routes.SCAN
+        Routes.AUDIT_LOG, Routes.CONFIG, Routes.SUMMARY, Routes.SCAN
     )
     val showBottomNav = currentRoute in bottomNavRoutes
 
@@ -181,7 +183,7 @@ fun KalazaNavHost(
             if (SessionManager.isLoggedIn() &&
                 System.currentTimeMillis() - lastInteractionAt >= AUTO_LOGOUT_TIMEOUT_MS
             ) {
-                onLogout()
+                performLogout(false)
                 lastInteractionAt = System.currentTimeMillis()
             }
         }
@@ -266,20 +268,12 @@ fun KalazaNavHost(
             composable(Routes.SUPER_ADMIN_OVERVIEW) {
                 val dashboardVm: DashboardViewModel = viewModel(factory = factory)
                 val dailySummaryVm: DailySummaryViewModel = viewModel(factory = factory)
-                // Reused only for its existing fulfillRequest() — Super Admin isn't shown the
-                // Medicine tab itself, just borrows the same allotment-fulfillment action so
-                // requests surfaced in "Needs Your Attention" are actually actionable here.
-                val medicineVm: MedicineViewModel = viewModel(factory = factory)
                 ReloadOnResume { dashboardVm.load(); dailySummaryVm.load() }
                 SuperAdminOverviewScreen(
                     dashboardViewModel = dashboardVm,
                     dailySummaryViewModel = dailySummaryVm,
                     onPatientClick = { patientId ->
                         navController.navigate(Routes.patientProfile(patientId))
-                    },
-                    onFulfillAllotment = { request, scannedCode ->
-                        medicineVm.fulfillRequest(request, scannedCode)
-                        dailySummaryVm.load()
                     },
                     onLogout = onLogout
                 )
@@ -304,11 +298,16 @@ fun KalazaNavHost(
             // ── Patient Profile ────────────────────────────────────────────────
             composable(
                 route = Routes.PATIENT_PROFILE,
-                arguments = listOf(navArgument("patientId") { type = NavType.StringType })
+                arguments = listOf(
+                    navArgument("patientId") { type = NavType.StringType },
+                    navArgument("tab") { type = NavType.IntType; defaultValue = 0 },
+                )
             ) { backStack ->
                 val patientId = backStack.arguments?.getString("patientId") ?: ""
+                val initialTab = backStack.arguments?.getInt("tab") ?: 0
                 PatientProfileScreen(
                     patientId = patientId,
+                    initialTab = initialTab,
                     factory = factory,
                     onBack = { navController.popBackStack() },
                     onEditPatient = { navController.navigate(Routes.patientEdit(patientId)) }
@@ -383,19 +382,6 @@ fun KalazaNavHost(
                     onPatientClick = { patientId ->
                         navController.navigate(Routes.patientProfile(patientId))
                     }
-                )
-            }
-
-            // ── Medicine (medicine-staff allotment rounds) ────────────────────────
-            composable(Routes.MEDICINE) {
-                val vm: MedicineViewModel = viewModel(factory = factory)
-                val notificationVm: NotificationViewModel = viewModel(factory = factory)
-                ReloadOnResume { vm.load(); notificationVm.load() }
-                MedicineScreen(
-                    viewModel = vm,
-                    unreadNotifications = notificationVm.unreadCount.collectAsState().value,
-                    onNotificationsClick = { navController.navigate(Routes.NOTIFICATIONS) },
-                    onLogout = onLogout
                 )
             }
 
