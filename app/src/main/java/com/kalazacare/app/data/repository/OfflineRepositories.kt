@@ -219,7 +219,7 @@ class OfflineMedicationRepository(
         cache.readRow<MedicationRow>(table, id)?.let {
             cache.upsertRow(table, id, it.copy(
                 status = MedStatus.ADMINISTERED.name, administeredBy = staffName,
-                administeredAt = java.time.LocalDateTime.now().toString(), administeredScannedCode = scannedCode,
+                administeredAt = nowIso(), administeredScannedCode = scannedCode,
             ))
         }
         sync.enqueue(PendingOpType.MED_MARK_ADMINISTERED, syncJson.encodeToString(MarkAdministeredPayload(id, staffName, scannedCode)))
@@ -479,8 +479,10 @@ class OfflineNotificationRepository(
             list.forEach { cache.upsertRow(Tables.NOTIFICATIONS, it.id, it.toRow()) }
             return list
         }
+        val cutoff = java.time.LocalDateTime.now().minusDays(NOTIFICATION_WINDOW_DAYS)
         return cache.readAllRows<NotificationRow>(Tables.NOTIFICATIONS).map { it.toDomain() }
-            .filter { it.recipientStaffId == staffId || it.recipientRole == role.notificationRole() }.sortedByDescending { it.timestamp }
+            .filter { it.recipientStaffId == staffId || it.recipientRole == role.notificationRole() }
+            .filter { it.timestamp.isAfter(cutoff) }.sortedByDescending { it.timestamp }
     }
 
     override suspend fun getUnreadCountForRecipient(staffId: String, role: UserRole): Int =

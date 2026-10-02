@@ -160,6 +160,8 @@ class DashboardViewModel(
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
     private val _pendingMeds   = MutableStateFlow(0)
     val pendingMeds: StateFlow<Int> = _pendingMeds.asStateFlow()
+    private val _missedMeds    = MutableStateFlow(0)
+    val missedMeds: StateFlow<Int> = _missedMeds.asStateFlow()
     private val _pendingApprovals = MutableStateFlow(0)
     val pendingApprovals: StateFlow<Int> = _pendingApprovals.asStateFlow()
     private val _totalPatients = MutableStateFlow(0)
@@ -184,8 +186,9 @@ class DashboardViewModel(
             _pendingApprovals.value = approvalRepo.getPendingRequests().size
             // One query across every patient instead of looping per patient -- was N
             // sequential round-trips, now a fixed 1 regardless of patient count.
-            _pendingMeds.value = medRepo.getMedicationsForDate(LocalDate.now())
-                .count { it.status == MedStatus.PENDING || it.status == MedStatus.OVERDUE }
+            val todaysMeds = medRepo.getMedicationsForDate(LocalDate.now())
+            _pendingMeds.value = todaysMeds.count { it.status == MedStatus.PENDING }
+            _missedMeds.value = todaysMeds.count { it.status == MedStatus.OVERDUE }
             applyFilters()
             _isLoading.value = false
         }
@@ -1214,7 +1217,8 @@ class ApprovalViewModel(
                 return@safeLaunch
             }
 
-            repo.approve(id, SessionManager.getCurrentStaffId(), SessionManager.getCurrentStaffName())
+            // Apply first, mark approved after: if the underlying write throws (e.g. a DB
+            // constraint), the request must stay pending instead of falsely reading "approved".
             when (request.entityType) {
                 ApprovalEntityType.PATIENT -> {
                     val patient = patientRepo.getPatientById(request.patientId)
@@ -1267,43 +1271,59 @@ class ApprovalViewModel(
                     }
                 }
             }
+            repo.approve(id, SessionManager.getCurrentStaffId(), SessionManager.getCurrentStaffName())
             auditRepo.addLog(AuditLogEntry(
-                action = "Edit Request Approved",
+                action = "${request.label()} Request Approved",
                 performedById = SessionManager.getCurrentStaffId(),
                 performedByName = SessionManager.getCurrentStaffName(),
                 targetPatientId = request.patientId,
                 targetPatientName = request.patientName,
-                details = "Approved change to ${request.fieldChanged} requested by ${request.requestedByName}",
+                details = "Approved ${request.summary()} requested by ${request.requestedByName}",
                 iconName = "check_circle",
             ))
             notificationRepo.add(AppNotification(
                 recipientStaffId = request.requestedById,
                 type = NotificationType.APPROVAL_APPROVED,
-                title = "Edit Request Approved",
-                message = "Your ${request.fieldChanged} change for ${request.patientName} was approved",
+                title = "${request.label()} Request Approved",
+                message = "Your ${request.summary()} for ${request.patientName} was approved",
                 targetRoute = "patient/${request.patientId}?tab=${request.entityType.profileTabIndex()}",
             ))
             load()
         }
     }
 
+    // "Medicine Add", "Vitals Edit", "Utility Delete" — names the tab a request came from.
+    private fun ApprovalRequest.label(): String = "${entityType.displayLabel()} " + when (action) {
+        ApprovalAction.ADD -> "Add"
+        ApprovalAction.EDIT -> "Edit"
+        ApprovalAction.DELETE -> "Delete"
+    }
+
+    private fun ApprovalRequest.summary(): String = when (action) {
+        ApprovalAction.ADD -> "request to add " +
+            (runCatching { syncJson.decodeFromString<NewMedicationPayload>(newValue).medicineName }.getOrNull()?.takeIf { it.isNotBlank() } ?: "a medication")
+        ApprovalAction.DELETE -> "request to delete " +
+            (if (entityType == ApprovalEntityType.MEDICATION && oldValue.isNotBlank()) oldValue else "this ${fieldChanged.lowercase()}")
+        ApprovalAction.EDIT -> "$fieldChanged change"
+    }
+
     /** Auto-rejects a request that can no longer be safely applied, with a system reason. */
     private suspend fun rejectStale(request: ApprovalRequest, reason: String) {
         repo.reject(request.id, SessionManager.getCurrentStaffId(), SessionManager.getCurrentStaffName(), reason)
         auditRepo.addLog(AuditLogEntry(
-            action = "Edit Request Auto-Rejected",
+            action = "${request.label()} Request Auto-Rejected",
             performedById = SessionManager.getCurrentStaffId(),
             performedByName = SessionManager.getCurrentStaffName(),
             targetPatientId = request.patientId,
             targetPatientName = request.patientName,
-            details = "Could not approve change to ${request.fieldChanged} — $reason",
+            details = "Could not approve ${request.summary()} — $reason",
             iconName = "cancel",
         ))
         notificationRepo.add(AppNotification(
             recipientStaffId = request.requestedById,
             type = NotificationType.APPROVAL_REJECTED,
-            title = "Edit Request Could Not Be Applied",
-            message = "Your ${request.fieldChanged} change for ${request.patientName} could not be applied — $reason",
+            title = "${request.label()} Request Could Not Be Applied",
+            message = "Your ${request.summary()} for ${request.patientName} could not be applied — $reason",
             targetRoute = "patient/${request.patientId}?tab=${request.entityType.profileTabIndex()}",
         ))
         load()
@@ -1314,19 +1334,19 @@ class ApprovalViewModel(
             val request = repo.getRequestById(id) ?: return@safeLaunch
             repo.reject(id, SessionManager.getCurrentStaffId(), SessionManager.getCurrentStaffName(), reason)
             auditRepo.addLog(AuditLogEntry(
-                action = "Edit Request Rejected",
+                action = "${request.label()} Request Rejected",
                 performedById = SessionManager.getCurrentStaffId(),
                 performedByName = SessionManager.getCurrentStaffName(),
                 targetPatientId = request.patientId,
                 targetPatientName = request.patientName,
-                details = "Rejected change to ${request.fieldChanged} — $reason",
+                details = "Rejected ${request.summary()} — $reason",
                 iconName = "cancel",
             ))
             notificationRepo.add(AppNotification(
                 recipientStaffId = request.requestedById,
                 type = NotificationType.APPROVAL_REJECTED,
-                title = "Edit Request Rejected",
-                message = "Your ${request.fieldChanged} change for ${request.patientName} was rejected — $reason",
+                title = "${request.label()} Request Rejected",
+                message = "Your ${request.summary()} for ${request.patientName} was rejected — $reason",
                 targetRoute = "patient/${request.patientId}?tab=${request.entityType.profileTabIndex()}",
             ))
             load()
@@ -1462,6 +1482,7 @@ data class SummaryStats(
     val vitalsRecorded: Int = 0,
     val medsAdministered: Int = 0,
     val medsPending: Int = 0,
+    val medsMissed: Int = 0,
     val utilityLogs: Int = 0,
     val pendingApprovals: Int = 0,
 )
@@ -1510,13 +1531,19 @@ class SummaryViewModel(
             _endDate.value = to
             val pts = patientRepo.getAllPatients()
             _patients.value = pts
-            val allMeds    = pts.flatMap { medRepo.getMedicationsForPatient(it.id).filter { m -> m.scheduledDate in from..to } }
+            // Same predicate as buildRangeReport: a recurring dose's stored scheduledDate is just the day it
+            // was created, so it applies to every day from then on; only a one-off dose is tied to its date.
+            val allMeds    = pts.flatMap {
+                medRepo.getMedicationsForPatient(it.id)
+                    .filter { m -> if (m.isRecurring) !m.scheduledDate.isAfter(to) else m.scheduledDate in from..to }
+            }
             val allVitals  = pts.flatMap { vitalsRepo.getVitalsForPatient(it.id).filter { v -> v.date in from..to } }
             val allUtility = pts.sumOf { utilityRepo.getUtilityForPatient(it.id).count { u -> u.date in from..to } }
             _stats.value = SummaryStats(
                 vitalsRecorded   = allVitals.size,
                 medsAdministered = allMeds.count { it.status == MedStatus.ADMINISTERED },
-                medsPending      = allMeds.count { it.status == MedStatus.PENDING || it.status == MedStatus.OVERDUE },
+                medsPending      = allMeds.count { it.status == MedStatus.PENDING },
+                medsMissed       = allMeds.count { it.status == MedStatus.OVERDUE },
                 utilityLogs      = allUtility,
                 pendingApprovals = approvalRepo.getPendingRequests().size
             )
