@@ -1,0 +1,10 @@
+## Copy this file to local.properties (git-ignored) and fill in your own values.
+sdk.dir=/path/to/Android/Sdk
+
+# Supabase project the app talks to (Project Settings -> API)
+SUPABASE_URL=https://YOUR-PROJECT.supabase.co
+SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
+
+# Comma-separated router/gateway IPs of the facility Wi-Fi. Login is only allowed on a
+# network whose gateway is in this list. Leave empty to disable the Wi-Fi gate (demo/dev).
+WIFI_GATEWAY_IPS=
