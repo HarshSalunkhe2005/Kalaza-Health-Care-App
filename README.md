@@ -8,7 +8,7 @@
 
 Android · Kotlin · Jetpack Compose · Supabase · Firebase Cloud Messaging
 
-[![Kalaza Care teaser](docs/media/teaser.gif)](docs/media/walkthrough.mp4)
+https://github.com/HarshSalunkhe2005/Kalaza-Health-Care-App/blob/main/docs/media/walkthrough.mp4
 
 [Download the 4-minute walkthrough](https://github.com/HarshSalunkhe2005/Kalaza-Health-Care-App/raw/main/docs/media/walkthrough.mp4) · [Download the 22-second teaser](https://github.com/HarshSalunkhe2005/Kalaza-Health-Care-App/raw/main/docs/media/teaser.mp4)
 
