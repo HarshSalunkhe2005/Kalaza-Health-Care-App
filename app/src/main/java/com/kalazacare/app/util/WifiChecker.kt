@@ -3,14 +3,13 @@ package com.kalazacare.app.util
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import com.kalazacare.app.BuildConfig
 
 /**
- * Master switch for the whole Wi-Fi gate — set to false to skip the check entirely and let
- * anyone log in regardless of network, for quick testing of everything else in the app while
- * the SSID-detection issue on newer Android is still being tracked down.
- * MUST be back to true before this ships to Kalaza Care.
+ * The Wi-Fi gate is on exactly when at least one facility gateway IP is configured (WIFI_GATEWAY_IPS in
+ * local.properties). Leave it empty for development or demos and anyone can log in from any network.
  */
-const val WIFI_GATE_ENABLED = true
+val WIFI_GATE_ENABLED: Boolean get() = ALLOWED_GATEWAY_IPS.isNotEmpty()
 
 /**
  * The facility Wi-Fi router(s)' gateway/local IP address (e.g. "192.0.2.3") -- the ONLY way
@@ -21,11 +20,12 @@ const val WIFI_GATE_ENABLED = true
  * never part of that same privacy carve-out, since it's not considered location-identifying the
  * way a Wi-Fi network name is, so it's proven to actually work where SSID didn't.
  *
- * To find this on a phone already connected to the target network: Settings -> Wi-Fi -> tap the
+ * To find it on a phone already connected to the target network: Settings -> Wi-Fi -> tap the
  * connected network -> look for "Gateway" or "Router" under its IP details (may be under an
- * "Advanced" section depending on the phone). Add that value to this set.
+ * "Advanced" section depending on the phone). Put that value in WIFI_GATEWAY_IPS (comma-separated).
  */
-val ALLOWED_GATEWAY_IPS = setOf("192.0.2.1", "192.0.2.2")
+val ALLOWED_GATEWAY_IPS: Set<String> =
+    BuildConfig.WIFI_GATEWAY_IPS.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
 
 /**
  * The connected Wi-Fi network's gateway/router IP address, or null if not connected to Wi-Fi or

@@ -1,5 +1,6 @@
 package com.kalazacare.app.data.remote
 
+import com.kalazacare.app.BuildConfig
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.createSupabaseClient
@@ -7,12 +8,10 @@ import io.github.jan.supabase.functions.Functions
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.realtime.Realtime
 
-// The anon key is safe to embed client-side — every request it makes is still
-// subject to the Row Level Security policies defined in the Supabase project, exactly
-// like Firebase's client config before it.
-private const val SUPABASE_URL = "https://YOUR-PROJECT.supabase.co"
-private const val SUPABASE_ANON_KEY =
-    "YOUR_SUPABASE_ANON_KEY"
+// Supplied at build time from local.properties (see local.properties.example). The anon key is safe to
+// ship in the client: every request it makes is still subject to the project's Row Level Security.
+private val SUPABASE_URL = BuildConfig.SUPABASE_URL
+private val SUPABASE_ANON_KEY = BuildConfig.SUPABASE_ANON_KEY
 
 object SupabaseClients {
     val main: SupabaseClient by lazy {

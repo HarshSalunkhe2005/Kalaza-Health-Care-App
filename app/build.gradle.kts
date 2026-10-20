@@ -1,4 +1,13 @@
+import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+// Environment-specific values come from the git-ignored local.properties (or env vars in CI)
+// and are compiled into BuildConfig, so no URL, key or network address lives in the source tree.
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+fun config(key: String): String = localProps.getProperty(key) ?: System.getenv(key) ?: ""
 
 plugins {
     alias(libs.plugins.android.application)
@@ -19,6 +28,10 @@ android {
         targetSdk = 35
         versionCode = 4
         versionName = "1.0.3"
+
+        buildConfigField("String", "SUPABASE_URL", "\"${config("SUPABASE_URL")}\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"${config("SUPABASE_ANON_KEY")}\"")
+        buildConfigField("String", "WIFI_GATEWAY_IPS", "\"${config("WIFI_GATEWAY_IPS")}\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -48,6 +61,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
@@ -127,4 +141,9 @@ dependencies {
     // Testing
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
+}
+
+// A release build without a backend URL would ship an app that cannot log in: fail early instead.
+tasks.matching { it.name.matches(Regex("(assemble|bundle)Release")) }.configureEach {
+    doFirst { require(config("SUPABASE_URL").isNotBlank()) { "SUPABASE_URL is not set (see local.properties.example)" } }
 }
